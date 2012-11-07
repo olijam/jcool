@@ -316,13 +316,15 @@ SEXP R_minfo(SEXP R_svar, SEXP R_ivars, SEXP R_count, SEXP R_val, SEXP R_progres
     v_cnt           = Calloc(L+1, int);
     s_cnt           = Calloc(L+1, int);
 
+    /*
     if(INTEGER(R_progress_flag)[0]) {
       printf("%5s %7s %6s %9s %9s %9s %s %s\n",
               "#","minfo","cells","svar","ivar","conv","factor","level");
       fflush(stdout);
     }
+    */
 
-    k=0;for(i=0;i<I;i++) s_cnt[l] += INTEGER(R_svar)[i] == 2;
+    k=0;for(i=0;i<I;i++) s_cnt[l] += INTEGER(R_svar)[i] > 1;
     v_cnt[l] = I;
     rv_factor_names[l] = rv_level_names[l] = "-";
 
