@@ -1,0 +1,11 @@
+Package: Rminfo
+Version: 1.0.0
+Date:    11Oct2012
+Title: Mutual Information for R
+Author:  James R. Oliphant <olijamer@gmail.com>
+Depends: R (>= 1.1.0)
+Maintainer: James R. Oliphant <olijamer@gmail.com>
+Description: 
+License: self
+URL:
+Packaged:

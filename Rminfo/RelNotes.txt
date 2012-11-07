@@ -1,0 +1,22 @@
+1.0.5
+    Added to the debug output.  Now included difference between Lc and L as well as
+number of iterations from the optim command.  This can be used to determine if
+the system is converging or not. Also filled out the help file for "ipf" function.
+
+1.0.6
+    Changed the convergence conditions.  The difference between Lc and L must now
+always decrease or it reenters the optim command again with the same parameters.
+    
+1.0.8 -- Fixed bug in IPF relating to the count of unique observations not be
+    aligned with the data.
+    .49 -- fixed bug in new data.coder function.  grep needed "^" anchor in some situations.
+
+1.0.9 
+    adding "closest" funcion and implimenting smarter gikker using it.
+    added "wazuni" calculations.
+
+1.1.0
+    Adding parrallel code of Lc and dLc using pthread functions
+
+1.1.1
+    Added custom netflix prediction stuff -- collaborative IPF.
