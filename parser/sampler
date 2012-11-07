@@ -1,0 +1,18 @@
+#!/usr/bin/perl
+use FindBin qw/$Bin/;
+use lib "$Bin/lib";
+use ParseOpts qw/%Opts/;
+
+my $p_keep = $Opts{keep} || .5;
+
+my $recs=0;
+my $sampled=0;
+while(<>) {
+  if($recs == 0 || rand(1) <= $p_keep) {
+    print;
+    $sampled++;
+  }
+  $recs++;
+}
+
+print STDERR "sampled $sampled / $recs @ $p_keep\n";
