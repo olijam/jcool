@@ -14,6 +14,7 @@ if(length(files) == 0) {files <- "stdin"}
 
 THREADS <- 10
 ITERATIONS <- 200
+VAR_COUNT <- 15
 library(doMC); registerDoMC(THREADS)
 library(Rminfo)
 
@@ -51,8 +52,14 @@ for(f in files) {
   recs <- read.csv(f,as.is=TRUE)
   gc()
 
+  SAMPLE_FACTOR <- 1e5/nrow(recs)
+  SAMPLE_FACTOR <- if(SAMPLE_FACTOR > 0.80) 0.80 else SAMPLE_FACTOR
+  SAMPLE_FACTOR <- if(SAMPLE_FACTOR < 0.20) 0.20 else SAMPLE_FACTOR
+
+  print(sprintf("%s SAMPLE_FACTOR %.3f%%",f,100 * SAMPLE_FACTOR))
+
   pres <- foreach(i=1:ITERATIONS) %dopar% {
-    r <- sample(1:nrow(recs), nrow(recs) * 0.20)
+    r <- sample(1:nrow(recs), nrow(recs) * SAMPLE_FACTOR)
     t <- minfo(recs$clicks[r],recs[r,var_cols],count=15,progress=TRUE)
     gc()
     return(t)
@@ -78,19 +85,28 @@ for(f in files) {
     t2$clicks[i]      <-  sum(recs$clicks[r])
     t2$ctr[i]   <- t2$clicks[i] / t2$impressions[i]
   }
+
+  ave_ctr <- sum(recs$clicks)/sum(recs$impressions)
   t2 <- rbind(t2,
     cbind(
-      factor="ALL",
-      level="ALL",
+      factor=sprintf("aa ALL: %d total factors",length(var_cols)),
+      level=sprintf("aa ALL: %d total levels",length(unique(unlist(recs[,var_cols])))),
       "1"=ITERATIONS,
-      pos=ITERATIONS,
+      pos=0,
       minfo=1,
-      cells=1,
+      cells=0,
       impressions=sum(recs$impressions),
       clicks=sum(recs$clicks),
-      ctr=sum(recs$clicks)/sum(recs$impressions)
+      ctr=ave_ctr
     ))
 
+  t2$gb <- "Average"
+  t2$gb[t2$ctr > ave_ctr] <- "Good"
+  t2$gb[t2$ctr < ave_ctr] <- "Bad"
+
+  o <- order(t2$factor,t2$ctr,decreasing=TRUE)
+  n <- c("gb","factor","level","impressions","clicks","ctr","1","pos","minfo","cells")
+
   fp <- unlist(strsplit(f,'.',fixed=TRUE))
-  write.csv(t2,file=sprintf("%s%s_report.csv",fp[1],opts["name"]))
+  write.csv(t2[o,n],file=sprintf("%s%s_report.csv",fp[1],opts["name"]),row.names=FALSE)
 }

@@ -5,7 +5,8 @@ use DBD::Pg qw/:async/;
 use Text::CSV;
 
 my $DB_NAME = 'simplifi-live';
-my $DB_HOST = 'db2-int';
+#my $DB_HOST = 'db2-int';
+my $DB_HOST = 'cs36-int';
 my %SQL;
 my %Lookup;
 my $CSV = Text::CSV->new({binary=>1});
@@ -203,7 +204,7 @@ select
 from ad_positions
 SQL_AD_POSITIONS
 
-my $dbh = DBI->connect("dbi:Pg:dbname=$DB_NAME;host=$DB_HOST",'','',{AutoCommit=>0});
+my $dbh = DBI->connect("dbi:Pg:dbname=$DB_NAME;host=$DB_HOST",'','',{AutoCommit=>0,RaiseError=>1});
 
 # Load the Lookup hash
 foreach my $key (keys %SQL) {
