@@ -46,21 +46,25 @@ var_cols <- c(
   "keywords",
   "context_l1",
   "context_l2",
-  "exchange")
+  "exchange",
+  "age",
+  "gender")
 
 for(f in files) {
   recs <- read.csv(f,as.is=TRUE)
+  recs$converts <- as.integer(recs$conversion_category > 0)
   gc()
 
+  STATE <- if(length(grep('cpa',recs$goal,invert=TRUE,fixed=TRUE))>0) "clicks" else "converts"
   SAMPLE_FACTOR <- 1e5/nrow(recs)
   SAMPLE_FACTOR <- if(SAMPLE_FACTOR > 0.80) 0.80 else SAMPLE_FACTOR
   SAMPLE_FACTOR <- if(SAMPLE_FACTOR < 0.20) 0.20 else SAMPLE_FACTOR
 
-  print(sprintf("%s SAMPLE_FACTOR %.3f%%",f,100 * SAMPLE_FACTOR))
+  print(sprintf("%s SAMPLE_FACTOR %.3f%% STATE %s",f,100 * SAMPLE_FACTOR, STATE))
 
   pres <- foreach(i=1:ITERATIONS) %dopar% {
     r <- sample(1:nrow(recs), nrow(recs) * SAMPLE_FACTOR)
-    t <- minfo(recs$clicks[r],recs[r,var_cols],count=15,progress=TRUE)
+    t <- minfo(recs[r,STATE],recs[r,var_cols],count=15,progress=TRUE)
     gc()
     return(t)
   }
@@ -83,10 +87,13 @@ for(f in files) {
     r <- which(recs[,t2$factor[i]] == t2$level[i])
     t2$impressions[i] <-  sum(recs$impressions[r])
     t2$clicks[i]      <-  sum(recs$clicks[r])
-    t2$ctr[i]   <- t2$clicks[i] / t2$impressions[i]
+    t2$ctr[i]         <- t2$clicks[i] / t2$impressions[i]
+    t2$converts[i]     <-  sum(recs$converts[r])
+    t2$atr[i]         <- t2$converts[i] / t2$impressions[i]
   }
 
   ave_ctr <- sum(recs$clicks)/sum(recs$impressions)
+  ave_atr <- sum(recs$converts)/sum(recs$impressions)
   t2 <- rbind(t2,
     cbind(
       factor=sprintf("aa ALL: %d total factors",length(var_cols)),
@@ -97,15 +104,24 @@ for(f in files) {
       cells=0,
       impressions=sum(recs$impressions),
       clicks=sum(recs$clicks),
-      ctr=ave_ctr
+      ctr=ave_ctr,
+      converts=sum(recs$converts),
+      atr=ave_atr
     ))
 
   t2$gb <- "Average"
-  t2$gb[t2$ctr > ave_ctr] <- "Good"
-  t2$gb[t2$ctr < ave_ctr] <- "Bad"
+  if(STATE == "clicks") {
+    t2$gb[t2$ctr > ave_ctr] <- "Good"
+    t2$gb[t2$ctr < ave_ctr] <- "Bad"
+  } else {
+    t2$gb[t2$atr > ave_atr] <- "Good"
+    t2$gb[t2$atr < ave_atr] <- "Bad"
+  }
 
-  o <- order(t2$factor,t2$ctr,decreasing=TRUE)
-  n <- c("gb","factor","level","impressions","clicks","ctr","1","pos","minfo","cells")
+  o <- if(STATE == "clicks") 
+    order(t2$factor,t2$ctr,decreasing=TRUE) else 
+    order(t2$factor,t2$atr,decreasing=TRUE)
+  n <- c("gb","factor","level","impressions","clicks","ctr","converts","atr","1","pos","minfo","cells")
 
   fp <- unlist(strsplit(f,'.',fixed=TRUE))
   write.csv(t2[o,n],file=sprintf("%s%s_report.csv",fp[1],opts["name"]),row.names=FALSE)

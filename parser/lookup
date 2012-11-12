@@ -1,0 +1,192 @@
+#!/usr/bin/perl
+use strict;
+use DBI;
+use DBD::Pg qw/:async/;
+use JSON::XS;
+
+my $DB_NAME = 'simplifi-live';
+#my $DB_HOST = 'db2-int';
+my $DB_HOST = 'cs36-int';
+my %SQL;
+my %Lookup;
+
+$SQL{age_id} = <<SQL_AGES;
+select
+  id as age_id,
+  name as age
+from demographic_properties
+where
+  category = 'Age'
+SQL_AGES
+
+$SQL{gender_id} = <<SQL_GENDERS;
+select
+  id as gender_id,
+  name as gender
+from demographic_properties
+where
+  category = 'Gender'
+SQL_GENDERS
+
+$SQL{domain_id} = <<SQL_DOMAINS;
+select
+  md5 as domain_id,
+  lower(substring(name,E'https?:\/\/([^\/\?]+)')) as domain
+from domains2
+SQL_DOMAINS
+
+$SQL{metro_id} = <<SQL_METROS;
+select 
+  m.id as metro_id,
+  m.name || ' ' || r.geo_code || ' ' || c.geo_code as metro_name, 
+  r.name || ' ' || c.geo_code as region_name, 
+  c.name as country_name,
+  d.name || ' (' || m.dma_code || ')' as dma_code 
+from geo_targets2 m, geo_targets2 r, geo_targets2 c, dmas d
+where 
+  m.parent_id = r.id and 
+  r.country_id = c.id and
+  m.dma_code = d.code
+SQL_METROS
+
+# Yes campaign_id is there twice
+$SQL{campaign_id} = <<SQL_CAMPAIGNS;
+select
+  camp.id as campaign_id,
+  trim(camp.name) || ' (' || camp.id || ')' as campaign_name,
+--  camp.start_date as start_date,
+--  camp.end_date as end_date,
+--  camp.max_bid as max_bid,
+  camp.daily_budget as daily_budget,
+--  camp.total_budget as total_budget,
+  trim(comp.name) as company_name,
+  trim(adv.name) as advertiser_name,
+  ctype.name as cost_type,
+  adx_cat.name as adx_category,
+  adx_prod.name as adx_product,
+--  openx_cat.name as openx_category,
+--  openx_cre.name as openx_attribute,
+--  openx_type.name as openx_type,
+--  rubi.name as rubicon_category,
+--  cweb.name as contextweb_category,
+--  lijit.name as lijit_category,
+--  adbrite.name as adbrite_category,
+  sifi_prod.name as sifi_product_category,
+--  sifi_sen.name as sifi_sensative_category,
+  camp_type.name as campaign_type,
+  goal.goal_type as goal
+from campaigns camp
+  left join companies comp on
+    camp.company_id = comp.id
+  left join advertisers adv on
+    camp.advertiser_id = adv.id
+  left join cost_types ctype on
+    camp.cost_type_id = ctype.id
+  left join adx_categories adx_cat on
+    camp.adx_category_id = adx_cat.id
+  left join adx_product_categories adx_prod on
+    camp.adx_product_category_id = adx_prod.id
+  left join openx_categories openx_cat on
+    camp.openx_category_id = openx_cat.id
+  left join openx_creative_attributes openx_cre on
+    camp.openx_creative_attribute_id = openx_cre.id
+  left join openx_creative_types openx_type on
+    camp.openx_creative_type_id = openx_type.id
+  left join rubicon_categories rubi on
+    camp.rubicon_category_id = rubi.id
+  left join contextweb_categories cweb on
+    camp.contextweb_category_id = cweb.id
+  left join lijit_categories lijit on
+    camp.lijit_category_id = lijit.id
+  left join adbrite_categories adbrite on
+    camp.adbrite_category_id = adbrite.id
+  left join sifi_product_categories sifi_prod on
+    camp.sifi_product_category_id = sifi_prod.id
+  left join sifi_sensitive_categories sifi_sen on
+    camp.sifi_sensitive_category_id = sifi_sen.id
+  left join campaign_types camp_type on
+    camp.campaign_type_id = camp_type.id
+  left join campaign_goals goal on
+    camp.id = goal.campaign_id
+SQL_CAMPAIGNS
+
+$SQL{ad_id} = <<SQL_ADS;
+select
+  ad.id as ad_id,
+  ad.id as ad_id,
+  ad_size.width || 'x' || ad_size.height as ad_size,
+  lower(substring(ad.target_url,E'https?:\/\/([^\/\?]+)')) as ad_service_domain,
+  file_type.name as ad_file_type,
+  ad.primary_creative_content_type as ad_content_type1,
+  ad.secondary_creative_content_type as ad_content_type2
+from ads ad
+  left join ad_sizes ad_size on
+    ad.ad_size_id = ad_size.id
+  left join ad_positions ad_pos on
+    ad.ad_position_id = ad_pos.id
+  left join ad_file_types file_type on
+    ad.ad_file_type_id = file_type.id
+SQL_ADS
+
+# Consider url uncoding
+$SQL{keyword_id} = <<SQL_KEYWORDS;
+select
+  md5 as keyword_id,
+  regexp_replace(
+    regexp_replace(
+      regexp_replace(name,E'(%[0-9a-f]{2}(quot)?)+','+','gi'),
+      E'[+]{2,}','+','g'),
+    E'^[+]|[+]\$','','g')
+    as keywords
+from keywords
+SQL_KEYWORDS
+
+$SQL{context_id} = <<SQL_CONTEXTS;
+select
+  c.id as context_id,
+  c.name as context_l1,
+  p.name as context_l2
+from contexts c
+  left join contexts p on
+    c.parent_id = p.id
+SQL_CONTEXTS
+
+$SQL{exchange_id} = <<SQL_EXCHANGES;
+select
+  id as exchange_id,
+  name as exchange
+from exchanges
+SQL_EXCHANGES
+
+$SQL{recency_id} = <<SQL_RECENCIES;
+select
+  id as recency_id,
+  name as recency
+from recencies
+SQL_RECENCIES
+
+$SQL{ad_position_id} = <<SQL_AD_POSITIONS;
+select
+  id as ad_position_id,
+  name as ad_position
+from ad_positions
+SQL_AD_POSITIONS
+
+my $dbh = DBI->connect("dbi:Pg:dbname=$DB_NAME;host=$DB_HOST",'','',{AutoCommit=>0,RaiseError=>1});
+
+# Load the Lookup hash
+foreach my $key (keys %SQL) {
+  my $sth = $dbh->prepare($SQL{$key});
+  $sth->execute;
+  my $f = $sth->{NAME_lc};
+  map{$Lookup{$key}{fields}[$_-1] = $f->[$_]} 1..$#$f;
+  while(my $a = $sth->fetchrow_arrayref) {
+    map{$Lookup{$key}{$a->[0]}[$_-1] = $a->[$_]} 1..$#$a;
+  }
+  $sth->finish;
+}
+$dbh->disconnect;
+
+#my $json = JSON::XS->new->pretty;
+#print $json->encode(\%Lookup);
+print encode_json \%Lookup;
