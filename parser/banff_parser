@@ -1,10 +1,11 @@
 #!/usr/bin/perl
 use strict;
-use Text::CSV;
 use JSON::XS;
 use FindBin qw/$Bin/;
 use lib "$Bin/lib";
 use ParseOpts qw/%Opts/;
+
+my $SEP = ',';
 
 $Opts{lookup} ||= "$ENV{HOME}/data/lookup/db.json";
 
@@ -74,9 +75,6 @@ total_sifi_cost
 financial_reward
 /;
 
-my $CSV = Text::CSV->new({binary=>1});
-my $CSV_FH = \*STDOUT;
-
 my $i=0;my %h_idx; map{$h_idx{$_} = $i++} @FIELDS;
 my @a_idx; map{push(@a_idx,$h_idx{$_})} @KEEP_FIELDS;
 # Prepare the header
@@ -92,7 +90,7 @@ for(my $i=0;$i<=$#header;$i++) {
 }
 my $i=0;my %b_idx; map{$b_idx{$_} = $i++} @header;
 
-$CSV->print($CSV_FH,\@header); print $CSV_FH "\n";
+print join($SEP,@header), "\n";
 
 #my $cnt;
 while(<>) {
@@ -111,7 +109,7 @@ while(<>) {
   } 0..$#a;
   splice(@b,$b_idx{time},1,&parse_time($b[$b_idx{time}]));
     
-  $CSV->print($CSV_FH,\@b); print $CSV_FH "\n";
+  print join($SEP,@b),"\n";
 #  last if($cnt++ > 10000);
 }
 

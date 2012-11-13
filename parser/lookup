@@ -181,7 +181,7 @@ foreach my $key (keys %SQL) {
   my $f = $sth->{NAME_lc};
   map{$Lookup{$key}{fields}[$_-1] = $f->[$_]} 1..$#$f;
   while(my $a = $sth->fetchrow_arrayref) {
-    map{$Lookup{$key}{$a->[0]}[$_-1] = $a->[$_]} 1..$#$a;
+    map{($Lookup{$key}{$a->[0]}[$_-1] = $a->[$_]) =~ tr/, / /s} 1..$#$a;
   }
   $sth->finish;
 }
