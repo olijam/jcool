@@ -1,4 +1,12 @@
-#!/usr/bin/Rscript --no-save
+#!/usr/local/bin/Rscript --no-save
+THREADS <- 10
+ITERATIONS <- 200
+VAR_COUNT <- 15
+library(doMC); registerDoMC(THREADS)
+library(Rminfo)
+library(sqldf)
+options(stringsAsFactors=FALSE)
+
 args <- commandArgs(trailingOnly=TRUE)
 
 opts <- args[grep("^--",args)]
@@ -11,12 +19,6 @@ opts["name"] <- if(is.na(opts["name"])) "" else opts["name"]
 r <- grep("^--",args)
 files <- if(length(r) > 0) args[-r] else args
 if(length(files) == 0) {files <- "stdin"}
-
-THREADS <- 10
-ITERATIONS <- 200
-VAR_COUNT <- 15
-library(doMC); registerDoMC(THREADS)
-library(Rminfo)
 
 var_cols <- c(
   "hour_id",
@@ -51,16 +53,17 @@ var_cols <- c(
   "gender")
 
 for(f in files) {
-  recs <- read.csv(f,as.is=TRUE)
+  recs <- read.csv.sql(filter=sprintf("xzcat %s",f))
   recs$converts <- as.integer(recs$conversion_category > 0)
   gc()
 
   STATE <- if(length(grep('cpa',recs$goal,invert=TRUE,fixed=TRUE))>0) "clicks" else "converts"
+#  STATE <- "clicks"
   SAMPLE_FACTOR <- 1e5/nrow(recs)
   SAMPLE_FACTOR <- if(SAMPLE_FACTOR > 0.80) 0.80 else SAMPLE_FACTOR
   SAMPLE_FACTOR <- if(SAMPLE_FACTOR < 0.20) 0.20 else SAMPLE_FACTOR
 
-  print(sprintf("%s SAMPLE_FACTOR %.3f%% STATE %s",f,100 * SAMPLE_FACTOR, STATE))
+  print(sprintf("%s rows %d, SAMPLE_FACTOR %.3f%%, STATE %s",f,nrow(recs),100 * SAMPLE_FACTOR, STATE))
 
   pres <- foreach(i=1:ITERATIONS) %dopar% {
     r <- sample(1:nrow(recs), nrow(recs) * SAMPLE_FACTOR)
@@ -94,10 +97,12 @@ for(f in files) {
 
   ave_ctr <- sum(recs$clicks)/sum(recs$impressions)
   ave_atr <- sum(recs$converts)/sum(recs$impressions)
+  levels <- 0
+  for(v in var_cols) levels <- levels + length(unique(recs[,v]))
   t2 <- rbind(t2,
     cbind(
       factor=sprintf("aa ALL: %d total factors",length(var_cols)),
-      level=sprintf("aa ALL: %d total levels",length(unique(unlist(recs[,var_cols])))),
+      level=sprintf("aa ALL: %d total levels",levels),
       "1"=ITERATIONS,
       pos=0,
       minfo=1,

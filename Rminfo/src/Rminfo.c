@@ -16,10 +16,12 @@
 #include <errno.h>
 #include <math.h>
 #include <R.h>
+#include <Rdefines.h>
 #include <Rinternals.h>
 #include <Rmath.h>
 #include <pthread.h>
 #include <sched.h>
+#include <unistd.h>
 
 #define BIG_NUM 1e25F
 #define REAL_ZERO 1e-25F
@@ -87,19 +89,20 @@ int int_coder2(int *v, int N, int *sv) {
 //        R_CheckUserInterrupt();
 
 /* get the list element named str, or return NULL */
-SEXP getListElement(SEXP list, char *str) {
-   SEXP elmt = R_NilValue, names = getAttrib(list, R_NamesSymbol);
-   int i;
+SEXP getListElt(SEXP list, char *str) {
+  SEXP elmt = R_NilValue, names = getAttrib(list, R_NamesSymbol);
+  int i;
 
-   for (i = 0; i < length(list); i++)
-       if(strcmp(CHAR(STRING_ELT(names, i)), str) == 0) {
-           elmt = VECTOR_ELT(list, i);
-           break;
-       }
-   return elmt;
+  for (i = 0; i < length(list); i++)
+     if(strcmp(CHAR(STRING_ELT(names, i)), str) == 0) {
+      elmt = VECTOR_ELT(list, i);
+      break;
+     }
+  return elmt;
 }
+
 SEXP mkSequence(double start, double end, double by) {
-    unsigned long n,N = (unsigned long) fabs((end - start)/by) + 1;
+    unsigned long n, N = (unsigned long) fabs((end - start)/by) + 1;
     SEXP R_v;
 
     PROTECT(R_v = allocVector(REALSXP,N));
@@ -547,11 +550,11 @@ int q_strcmp(const void *a, const void *b) {
     return(strcmp(*((char **)a),*((char **)b)));
 }
 
-unsigned int str_coder(char **v, unsigned int N, unsigned int *rv) {
+unsigned int str_coder(const char **v, int N, int *rv) {
     unsigned int I=1,n;
     char **sv;
 
-    sv = Calloc(N,char *);
+    sv = Calloc(N, char *);
     memcpy(sv,v,N*sizeof(char *));
 
     qsort(v,(size_t)N,sizeof(char*),q_strcmp);
@@ -560,10 +563,197 @@ unsigned int str_coder(char **v, unsigned int N, unsigned int *rv) {
         if(strcmp(v[n],v[n-1])) v[I++] = v[n];
 
     for(n=0;n<N;n++)
-        rv[n] = ((char**)bsearch(sv + n,v,(size_t)I,sizeof(char*),q_strcmp)) - v;
+        rv[n] = ((const char**)bsearch(sv + n,v,(size_t)I,sizeof(const char*),q_strcmp)) - v;
 
     Free(sv);
     return(I);
+}
+
+typedef struct {
+  int *data, levels;
+  const char **values;
+} myfactor_s;
+
+typedef struct {
+  SEXP R_df;
+  myfactor_s *df;
+  int *col_idx, col_cnt, var_cnt, sam_size, verbose, threads, running;
+  pthread_cond_t  cond;
+  pthread_mutex_t mutx;
+  pthread_attr_t attr;
+} pminfo_args;
+
+typedef struct {
+  pminfo_args *pargs;
+  int col;
+} pcoder_s;
+
+void *pcoder(void *p) {
+  pcoder_s *arg = p;
+  SEXP R_v;
+  int *d, K, i, I, j = arg->col;
+  const char **stmp, **s;
+
+  /* No PROTECT here -- Don't want to mess with the stack */
+  R_v = VECTOR_ELT(arg->pargs->R_df,arg->pargs->col_idx[j]);
+  I = length(R_v);
+  if(!IS_CHARACTER(R_v))
+        error("Column %d is not a character vector\n",arg->pargs->col_idx[j]);
+  d = arg->pargs->df[j].data = Calloc(I, int);
+  stmp = Calloc(I, const char *);
+  for(i=0;i<I;i++) stmp[i] = CHAR(STRING_ELT(R_v,i));
+  K = arg->pargs->df[j].levels = str_coder(stmp, I, d);
+  s = arg->pargs->df[j].values = Calloc(K, const char *);
+  memcpy(s, stmp, K * sizeof(const char *));
+  Free(stmp);
+
+  pthread_mutex_lock(&arg->pargs->mutx);
+  arg->pargs->running -= 1;
+  pthread_cond_signal(&arg->pargs->cond);
+  pthread_mutex_unlock(&arg->pargs->mutx);
+  pthread_exit(NULL);
+}
+
+typedef struct {
+  pminfo_args *pargs;
+  int *s_cnt, *v_cnt, *cells;
+  double *minfo;
+  char **factors, **levels;
+} pminfo_s;
+
+void *pminfo_factors(void *p) {
+  int i;
+  pminfo_s *arg = p;
+
+  for(i=0;i<arg->pargs->var_cnt;i++) {
+    arg->cells[i] = i;
+  }
+  sleep(1);
+
+  pthread_mutex_lock(&arg->pargs->mutx);
+  arg->pargs->running -= 1;
+  pthread_cond_signal(&arg->pargs->cond);
+  pthread_mutex_unlock(&arg->pargs->mutx);
+  pthread_exit(NULL);
+}
+
+SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
+  SEXP R_rv;
+  double *minfo;
+  int *cells, *s_cnt, *v_cnt;
+  char **factors, **levels;
+  int i, iterations;
+  pminfo_args pargs;
+  pminfo_s *pmi_s;
+  pcoder_s *pcd_s;
+  pthread_t *ths;
+
+  pargs.R_df = R_df;
+  pargs.col_cnt = length(getListElt(R_args,"ivars")) +1;
+  pargs.col_idx = Calloc(pargs.var_cnt, int);
+  pargs.col_idx[0] = *INTEGER(getListElt(R_args,"svar"));
+  memcpy(pargs.col_idx+1, INTEGER(getListElt(R_args,"ivars")), sizeof(int) * (pargs.col_cnt-1)) ;
+  pargs.var_cnt  = *INTEGER(getListElt(R_args,"var_cnt"));
+  pargs.sam_size = *INTEGER(getListElt(R_args,"sample_size"));
+  pargs.verbose  = *INTEGER(getListElt(R_args,"verbose"));
+  pargs.threads  = INTEGER(getListElt(R_args,"threads"))[0];
+  pargs.running  = 0;
+
+  pthread_cond_init(&pargs.cond, NULL);
+  pthread_mutex_init(&pargs.mutx, NULL);
+
+  pthread_attr_init(&pargs.attr);
+  pthread_attr_setdetachstate(&pargs.attr, PTHREAD_CREATE_JOINABLE);
+  pthread_attr_setschedpolicy(&pargs.attr, SCHED_FIFO);
+  pthread_attr_setguardsize(&pargs.attr, 4096);  /* default is 4069 */
+  pthread_attr_setstacksize(&pargs.attr, 40960); /* default is 8388608 -- way to big! */
+
+  pargs.df = Calloc(pargs.col_cnt, myfactor_s);
+  /** Threaded Coder **/
+  ths      = Calloc(pargs.col_cnt, pthread_t);
+  pcd_s = Calloc(pargs.col_cnt, pcoder_s);
+  for(i=0;i<pargs.col_cnt;i++) {
+    pcd_s[i].pargs = &pargs;
+    pcd_s[i].col = i;
+    
+    pthread_mutex_lock(&pargs.mutx);
+    while(pargs.running >= pargs.threads) pthread_cond_wait(&pargs.cond, &pargs.mutx);
+    pargs.running += 1;
+    pthread_mutex_unlock(&pargs.mutx);
+//    printf("pcoder: Launching %d with %d running\n",i,pargs.running);
+    pthread_create(&ths[i], &pargs.attr, pcoder, (void *) &pcd_s[i]);
+  }
+  for(i=0;i<pargs.col_cnt;i++) {
+//    printf("pcoder: Joining %d with %d running\n",i,pargs.running);
+    pthread_join(ths[i], NULL);
+  }
+  Free(ths);
+  Free(pcd_s);
+
+  /* Threaded Minfo */
+  iterations = INTEGER(getListElt(R_args,"iterations"))[0];
+
+  pmi_s   = Calloc(iterations, pminfo_s);
+  ths     = Calloc(iterations, pthread_t);
+  minfo   = Calloc(iterations * pargs.var_cnt, double);
+  cells   = Calloc(iterations * pargs.var_cnt, int);
+  s_cnt   = Calloc(iterations * pargs.var_cnt, int);
+  v_cnt   = Calloc(iterations * pargs.var_cnt, int);
+  factors = Calloc(iterations * pargs.var_cnt, char *);
+  levels  = Calloc(iterations * pargs.var_cnt, char *);
+
+  for(i=0;i<iterations;i++) {
+    R_CheckUserInterrupt();
+    /* Initialize the new thread */
+    pmi_s[i].pargs   = &pargs;
+    pmi_s[i].minfo   = minfo   + i * pargs.var_cnt;
+    pmi_s[i].cells   = cells   + i * pargs.var_cnt;
+    pmi_s[i].s_cnt   = s_cnt   + i * pargs.var_cnt;
+    pmi_s[i].v_cnt   = v_cnt   + i * pargs.var_cnt;
+    pmi_s[i].factors = factors + i * pargs.var_cnt;
+    pmi_s[i].levels  = levels  + i * pargs.var_cnt;
+
+    /* Queue the thread */
+    pthread_mutex_lock(&pargs.mutx);
+    while(pargs.running >= pargs.threads) pthread_cond_wait(&pargs.cond, &pargs.mutx);
+    pargs.running += 1;
+    pthread_mutex_unlock(&pargs.mutx);
+    printf("pminfo_factors: Launching %d with %d running\n",i,pargs.running);
+    pthread_create(&ths[i], &pargs.attr, pminfo_factors, (void *) &pmi_s[i]);
+  }
+
+  printf("STarted them all\n");
+  sleep(1);
+  /* Accumulate the data and formulate return list */
+  PROTECT(R_rv = allocVector(VECSXP,iterations));
+  for(i=0;i<iterations;i++) {
+    /* join */
+    printf("Joining %d with %d running\n",i,pargs.running);
+    pthread_join(ths[i], NULL);
+
+    SET_VECTOR_ELT(R_rv,i,allocVector(INTSXP,pargs.var_cnt));
+    memcpy(INTEGER(VECTOR_ELT(R_rv,i)),pmi_s[i].cells,pargs.var_cnt * sizeof(int));
+  }
+  Free(levels);
+  Free(factors);
+  Free(v_cnt);
+  Free(s_cnt);
+  Free(cells);
+  Free(minfo);
+  Free(ths);
+  Free(pmi_s);
+  for(i=0;i<pargs.col_cnt;i++) {
+    Free(pargs.df[i].data);
+    Free(pargs.df[i].values);
+  }
+  Free(pargs.df);
+  Free(pargs.col_idx);
+  pthread_mutex_destroy(&pargs.mutx);
+  pthread_cond_destroy(&pargs.cond);
+  pthread_attr_destroy(&pargs.attr);
+
+  UNPROTECT(1);
+  return(R_rv);
 }
 
 int q_ushortcmp(const void *a, const void *b) {
@@ -611,14 +801,14 @@ unsigned short ushort_coder(unsigned short *v, unsigned int N, unsigned short *r
 SEXP R_minfo_old(SEXP R_data, SEXP R_state, SEXP R_iterate, SEXP R_progress, SEXP R_count, SEXP R_val) {
     unsigned int i,I = nrows(R_data), j,J = ncols(R_data);
     unsigned int *data, *state;
-    char **s;
+    const char **s;
 
     SEXP R_v, R_names, R_mi;
 
     if(length(R_state) != I) 
         error("State vector is not the same length as rows in data! nrow(data) %d len(state) %d\n",I,length(R_state));
 
-    s     = Calloc(I,char *);
+    s     = Calloc(I,const char *);
     state = Calloc(I,unsigned int);
 
     PROTECT(R_names = VECTOR_ELT(getAttrib(R_data,R_DimNamesSymbol),1));
@@ -628,14 +818,14 @@ SEXP R_minfo_old(SEXP R_data, SEXP R_state, SEXP R_iterate, SEXP R_progress, SEX
     }
 
     PROTECT(R_v = coerceVector(R_state,STRSXP));
-    for(i=0;i<I;i++) s[i] = (char *)CHAR(STRING_ELT(R_v,i));
+    for(i=0;i<I;i++) s[i] = CHAR(STRING_ELT(R_v,i));
     j = str_coder(s,I,state);
     UNPROTECT(1);
 
     PROTECT(R_v = coerceVector(R_data,STRSXP));
     data = Calloc(I*J,unsigned int);
     for(j=0;j<J;j++) {
-        for(i=0;i<I;i++) s[i] = (char *)CHAR(STRING_ELT(R_v,j*I+i));
+        for(i=0;i<I;i++) s[i] = CHAR(STRING_ELT(R_v,j*I+i));
         i = str_coder(s,I,data+j*I);
     }
     UNPROTECT(1);
@@ -2397,10 +2587,10 @@ SEXP get_giks(int node_idx, int rec_idx, SEXP rho, int debug) {
 
     PROTECT(R_node  = VECTOR_ELT(findVar(install("gtree"),rho),node_idx-1));
     if(R_node == R_NilValue) error("Bad gtree node");
-//    var_name  = CHAR(STRING_ELT(coerceVector(getListElement(R_node,"var.name"),STRSXP),0));
+//    var_name  = CHAR(STRING_ELT(coerceVector(getListElt(R_node,"var.name"),STRSXP),0));
     var_name  = (char *)CHAR(STRING_ELT(coerceVector(VECTOR_ELT(R_node,0),STRSXP),0));
 
-    PROTECT(R_tmp = getListElement(findVar(install("rec"),rho), var_name));
+    PROTECT(R_tmp = getListElt(findVar(install("rec"),rho), var_name));
     if(!strcmp(CHAR(STRING_ELT(getAttrib(R_tmp, install("class")),0)),"factor")) {
         i = INTEGER(R_tmp)[rec_idx];
         var_value = (char *)CHAR(STRING_ELT(getAttrib(R_tmp,install("levels")),i-1));
@@ -2408,7 +2598,7 @@ SEXP get_giks(int node_idx, int rec_idx, SEXP rho, int debug) {
         var_value = (char *)CHAR(STRING_ELT(coerceVector(R_tmp,STRSXP),rec_idx));
     UNPROTECT(1);
 
-//    PROTECT(R_tmp = getListElement(R_node,"values"));
+//    PROTECT(R_tmp = getListElt(R_node,"values"));
     PROTECT(R_tmp = VECTOR_ELT(R_node,3));
     I = length(R_tmp);
     for(i=0;i<I;i++)
@@ -2426,11 +2616,11 @@ SEXP get_giks(int node_idx, int rec_idx, SEXP rho, int debug) {
 
     UNPROTECT(1);
     if(i >= I || !strcmp(p,"**")) /* Nothing found or the end of the road */
-//        return(getListElement(R_node,"giks"));
+//        return(getListElt(R_node,"giks"));
         return(VECTOR_ELT(R_node,5));
     else
         if(strspn(p,"*"))
-//            return(getListElement(VECTOR_ELT(findVar(install("gleaf"),rho),atoi(p+1)-1),"giks"));
+//            return(getListElt(VECTOR_ELT(findVar(install("gleaf"),rho),atoi(p+1)-1),"giks"));
             return(VECTOR_ELT(VECTOR_ELT(findVar(install("gleaf"),rho),atoi(p+1)-1),1));
         else
             return(get_giks(atoi(p),rec_idx,rho,debug));
@@ -2466,7 +2656,7 @@ SEXP R_gikker(SEXP RI, SEXP RK, SEXP Rtrunk, SEXP Renv, SEXP Rdebug) {
 }
 SEXP R_gikker2(SEXP Ripf, SEXP Rrecs, SEXP Rdebug) {
     int i,I = length(VECTOR_ELT(Rrecs,0));
-    int k,K = ncols(getListElement(Ripf,"giks"));
+    int k,K = ncols(getListElt(Ripf,"giks"));
     int j,J,node_idx;
     char *p=NULL,*var_name,*var_value;
     char ntype,go,debug = INTEGER(Rdebug)[0];
@@ -2479,8 +2669,8 @@ SEXP R_gikker2(SEXP Ripf, SEXP Rrecs, SEXP Rdebug) {
     PROTECT(Rnidx = allocVector(INTSXP,I));
     PROTECT(Rntype = allocVector(INTSXP,I));
 
-    PROTECT(R_gtree = getListElement(getListElement(Ripf,"m"),"gtree"));
-    PROTECT(R_gleaf = getListElement(getListElement(Ripf,"m"),"gleaf"));
+    PROTECT(R_gtree = getListElt(getListElt(Ripf,"m"),"gtree"));
+    PROTECT(R_gleaf = getListElt(getListElt(Ripf,"m"),"gleaf"));
     node_idx = length(R_gtree)-1;
     PROTECT(R_trunk_node = VECTOR_ELT(R_gtree,node_idx));
     if(debug) Rprintf("I %d K %d root_idx %d\n",I,K,node_idx);
@@ -2492,7 +2682,7 @@ SEXP R_gikker2(SEXP Ripf, SEXP Rrecs, SEXP Rdebug) {
         ntype = 3;
         while(go) {
             var_name = (char *)CHAR(STRING_ELT(VECTOR_ELT(R_node,0),0)); // var.name
-            R_var = getListElement(Rrecs, var_name);
+            R_var = getListElt(Rrecs, var_name);
             R_attr = getAttrib(R_var, install("class"));
             if(R_attr != R_NilValue && strcmp(CHAR(STRING_ELT(R_attr,0)),"factor") == 0) {
                 j = INTEGER(R_var)[i];
@@ -3271,10 +3461,10 @@ SEXP R_predict_coipf(SEXP R_X, SEXP R_model, SEXP R_mnum, SEXP R_rnum, SEXP R_sk
     PROTECT(R_rdmin  = allocVector(REALSXP,I));
     PROTECT(R_rdmax  = allocVector(REALSXP,I));
 
-    PROTECT(R_ml    = getListElement(R_model,"ml"));
-    PROTECT(R_rl    = getListElement(R_model,"rl"));
-    PROTECT(R_mgiks = coerceVector(getListElement(R_model,"mgiks"),REALSXP));
-    PROTECT(R_rgiks = coerceVector(getListElement(R_model,"rgiks"),REALSXP));
+    PROTECT(R_ml    = getListElt(R_model,"ml"));
+    PROTECT(R_rl    = getListElt(R_model,"rl"));
+    PROTECT(R_mgiks = coerceVector(getListElt(R_model,"mgiks"),REALSXP));
+    PROTECT(R_rgiks = coerceVector(getListElt(R_model,"rgiks"),REALSXP));
     PROTECT(R_rids  = coerceVector(duplicate(getAttrib(R_rl,R_NamesSymbol)),INTSXP));
     rJ = length(R_rl);
     mJ = length(R_ml);
@@ -3458,10 +3648,10 @@ SEXP R_predict_pcoipf(SEXP R_X, SEXP R_model, SEXP R_mnum, SEXP R_rnum, SEXP R_s
     PROTECT(s.R_rdmin  = allocVector(REALSXP,s.I));
     PROTECT(s.R_rdmax  = allocVector(REALSXP,s.I));
 
-    PROTECT(s.R_ml    = getListElement(R_model,"ml"));
-    PROTECT(s.R_rl    = getListElement(R_model,"rl"));
-    PROTECT(s.R_mgiks = coerceVector(getListElement(R_model,"mgiks"),REALSXP));
-    PROTECT(s.R_rgiks = coerceVector(getListElement(R_model,"rgiks"),REALSXP));
+    PROTECT(s.R_ml    = getListElt(R_model,"ml"));
+    PROTECT(s.R_rl    = getListElt(R_model,"rl"));
+    PROTECT(s.R_mgiks = coerceVector(getListElt(R_model,"mgiks"),REALSXP));
+    PROTECT(s.R_rgiks = coerceVector(getListElt(R_model,"rgiks"),REALSXP));
     PROTECT(s.R_rids  = coerceVector(duplicate(getAttrib(s.R_rl,R_NamesSymbol)),INTSXP));
     
     threads = Calloc(T,pthread_t);
@@ -3538,13 +3728,13 @@ SEXP export_netflix(SEXP R_list, SEXP R_I, SEXP R_file) {
     fp = fopen(file, "w");
     if(fp == NULL) error("File %s didn't open %d\n",file,errno);
 
-    R_mid = coerceVector(getListElement(R_list,"mid"),INTSXP);
+    R_mid = coerceVector(getListElt(R_list,"mid"),INTSXP);
     if(R_mid == R_NilValue) error("Can't find mid column\n");
     mid = INTEGER(R_mid);
-    R_rid = coerceVector(getListElement(R_list,"rid"),INTSXP);
+    R_rid = coerceVector(getListElt(R_list,"rid"),INTSXP);
     if(R_rid == R_NilValue) error("Can't find rid column\n");
     rid = INTEGER(R_rid);
-    R_pscore = coerceVector(getListElement(R_list,"pscore"),REALSXP);
+    R_pscore = coerceVector(getListElt(R_list,"pscore"),REALSXP);
     if(R_pscore == R_NilValue) error("Can't find pscore column\n");
     pscore = REAL(R_pscore);
 

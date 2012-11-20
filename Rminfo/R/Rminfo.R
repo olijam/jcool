@@ -1,6 +1,34 @@
 #
 #
 
+minfo_factors <- function(df,args) {
+  df <- as.data.frame(df)
+  n  <- 1:ncol(df); names(n) <- names(df)
+  
+  args <- as.list(args)
+
+  if(is.character(args[["svar"]])) args[["svar"]] <- n[args[["svar"]]]
+  df[,args[["svar"]]] <- as.character(df[,args[["svar"]]])
+  args[["svar"]] <- as.integer(args[["svar"]] -1)
+
+  if(is.character(args[["ivars"]])) args[["ivars"]] <- n[args[["ivars"]]]
+  for(v in args[["ivars"]]) df[,v] <- as.character(df[,v])
+  args[["ivars"]] <- as.integer(args[["ivars"]] -1)
+
+  args[["var_cnt"]]     <- if(args[["var_cnt"]])     as.integer(args[["var_cnt"]])     else 15
+  args[["sample_size"]] <- if(args[["sample_size"]]) as.integer(args[["sample_size"]]) else nrow(df)
+  args[["verbose"]]     <- if(args[["verbose"]])     as.integer(args[["verbose"]])     else 1
+  args[["threads"]]     <- if(args[["threads"]])     as.integer(args[["threads"]])     else 1
+  args[["iterations"]]  <- if(args[["iterations"]])  as.integer(args[["iterations"]])  else 1
+
+#  print(args)
+#  for(v in args) print(class(v))
+
+  rv = .Call("R_pminfo_factors",df,args)
+  if(args[["verbose"]]) { return(invisible(rv)) }
+  else                  { return(rv) }
+}
+
 minfo <- function(svar,ivars,count=0,val=1,progress=FALSE,entropy=FALSE) {
   ivars <- as.data.frame(ivars)
   for(j in 1:ncol(ivars)) {
