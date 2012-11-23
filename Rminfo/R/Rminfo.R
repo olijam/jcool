@@ -2,29 +2,30 @@
 #
 
 minfo_factors <- function(df,args) {
-  df <- as.data.frame(df)
-  n  <- 1:ncol(df); names(n) <- names(df)
+  df$value <- as.data.frame(df$value)
+  n  <- 1:ncol(df$value); names(n) <- names(df$value)
   
   args <- as.list(args)
 
   if(is.character(args[["svar"]])) args[["svar"]] <- n[args[["svar"]]]
-  df[,args[["svar"]]] <- as.character(df[,args[["svar"]]])
+  df$value[,args[["svar"]]] <- as.character(df$value[,args[["svar"]]])
   args[["svar"]] <- as.integer(args[["svar"]] -1)
 
   if(is.character(args[["ivars"]])) args[["ivars"]] <- n[args[["ivars"]]]
-  for(v in args[["ivars"]]) df[,v] <- as.character(df[,v])
+  for(v in args[["ivars"]]) df$value[,v] <- as.character(df$value[,v])
   args[["ivars"]] <- as.integer(args[["ivars"]] -1)
 
-  args[["var_cnt"]]     <- if(args[["var_cnt"]])     as.integer(args[["var_cnt"]])     else 15
-  args[["sample_size"]] <- if(args[["sample_size"]]) as.integer(args[["sample_size"]]) else nrow(df)
-  args[["verbose"]]     <- if(args[["verbose"]])     as.integer(args[["verbose"]])     else 1
-  args[["threads"]]     <- if(args[["threads"]])     as.integer(args[["threads"]])     else 1
-  args[["iterations"]]  <- if(args[["iterations"]])  as.integer(args[["iterations"]])  else 1
+  args[["var_cnt"]]     <- as.integer(if(is.null(args[["var_cnt"]]))     15       else args[["var_cnt"]])
+  args[["sample_size"]] <- as.integer(if(is.null(args[["sample_size"]])) nrow(df$value) else args[["sample_size"]])
+  args[["verbose"]]     <- as.integer(if(is.null(args[["verbose"]]))     1        else args[["verbose"]])
+  args[["threads"]]     <- as.integer(if(is.null(args[["threads"]]))     1        else args[["threads"]])
+  args[["iterations"]]  <- as.integer(if(is.null(args[["iterations"]]))  1        else args[["iterations"]])
 
 #  print(args)
 #  for(v in args) print(class(v))
 
-  rv = .Call("R_pminfo_factors",df,args)
+  print(".Call R_pminfo_factors")
+  rv = .Call("R_pminfo_factors",df$value,args)
   if(args[["verbose"]]) { return(invisible(rv)) }
   else                  { return(rv) }
 }
