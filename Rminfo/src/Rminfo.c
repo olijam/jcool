@@ -576,9 +576,9 @@ unsigned int str_coder(const char **v, int N, int *rv) {
 int sampler(int K, int I, int *y) {
   int i, j;
   int *x = Calloc(I, int);
+
   if(K > I) K = I;
   for(i=0;i<I;i++) x[i] = i;
-  srand48((long)x);
   for(i=0;i<K;i++) {
     j = I * drand48();
     y[i] = x[j];
@@ -596,7 +596,7 @@ typedef struct {
 typedef struct {
   SEXP R_df;
   myfactor_s *df;
-  int *col_idx, col_cnt, row_cnt, var_cnt, sam_size, verbose;
+  int *col_idx, col_cnt, vars, samples, verbose;
   sem_t sem;
   pthread_attr_t attr;
 } pminfo_args;
@@ -692,23 +692,23 @@ int mentropy_sampled(myfactor_s *s, myfactor_s *v, myfactor_s *w, int *sam_idx, 
 
 void *pminfo_factors(void *p) {
   pminfo_s *arg = p;
-  int l=0, L=0, wK=1, i, I = arg->pargs->row_cnt, samI = arg->pargs->sam_size;
+  int l=0, L=0, wK=1, i, samI = arg->pargs->samples;
   int j, J = arg->pargs->col_cnt;
   int *sam_idx, k, min_j, min_k;
   double min_entropy=0, *entropy, tot_entropy, minfo=0;
   myfactor_s w, *df = arg->pargs->df;
 
   sam_idx = Calloc(samI, int);
-  sampler(samI, I, sam_idx);
+  sampler(samI, df[0].rows, sam_idx);
   tot_entropy = total_entropy_sampled(&df[0], sam_idx, samI);
   w.data = Calloc(samI, int);
   w.rows = samI;
   w.levels = 1;
  
-  for(i=1;i<J;i++) L += df[i].levels;
-  if(L > arg->pargs->var_cnt) L = arg->pargs->var_cnt;
+  for(j=1;j<J;j++) L += df[j].levels;
+  if(L > arg->pargs->vars) L = arg->pargs->vars;
 
-  for(i=0;i<samI;i++) arg->s_cnt[l] += df[0].data[sam_idx[i]] > 0;
+  for(i=0;i<samI;i++)  arg->s_cnt[l] += df[0].data[sam_idx[i]] > 0;
   arg->v_cnt[l] = samI;
   arg->factors[l] = arg->levels[l] = "-";
   arg->cells[l] = w.levels;
@@ -740,7 +740,7 @@ void *pminfo_factors(void *p) {
       w.data[i] = w.data[i] * 2 + (df[min_j].data[sam_idx[i]] == min_k);
 
       arg->v_cnt[l] += (df[min_j].data[sam_idx[i]] == min_k);
-      arg->s_cnt[l] += (df[min_j].data[sam_idx[k]] == min_k) * (df[0].data[sam_idx[i]] > 0);
+      arg->s_cnt[l] += (df[min_j].data[sam_idx[i]] == min_k) * (df[0].data[sam_idx[i]] > 0);
     }
     w.levels = int_coder3(w.data,w.rows);
     if(w.levels > samI) error("Levels greater than records! %d > %d\n",w.levels,samI);
@@ -779,13 +779,12 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
 
   printf("Starting R_pminfo_factors\n");
   pargs.R_df = R_df;
+  pargs.vars  = *INTEGER(getListElt(R_args,"vars"));
   pargs.col_cnt = length(getListElt(R_args,"ivars")) +1;
-  pargs.col_idx = Calloc(pargs.var_cnt, int);
+  pargs.col_idx = Calloc(pargs.col_cnt, int);
   pargs.col_idx[0] = *INTEGER(getListElt(R_args,"svar"));
   memcpy(pargs.col_idx+1, INTEGER(getListElt(R_args,"ivars")), sizeof(int) * (pargs.col_cnt-1)) ;
-  pargs.row_cnt  = nrows(R_df);
-  pargs.var_cnt  = *INTEGER(getListElt(R_args,"var_cnt"));
-  pargs.sam_size = *INTEGER(getListElt(R_args,"sample_size"));
+  pargs.samples = *INTEGER(getListElt(R_args,"samples"));
   pargs.verbose  = *INTEGER(getListElt(R_args,"verbose"));
 
   threads  = *INTEGER(getListElt(R_args,"threads"));
@@ -794,8 +793,8 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
   pthread_attr_init(&pargs.attr);
   pthread_attr_setdetachstate(&pargs.attr, PTHREAD_CREATE_JOINABLE);
   pthread_attr_setschedpolicy(&pargs.attr, SCHED_FIFO);
-  pthread_attr_setguardsize(&pargs.attr, 2096);  /* default is 4069 */
-  pthread_attr_setstacksize(&pargs.attr, 20960); /* default is 8388608 -- way to big! */
+  pthread_attr_setguardsize(&pargs.attr, 4096);  /* default is 4069 */
+  pthread_attr_setstacksize(&pargs.attr, 40960); /* default is 8388608 -- way to big! */
 
   pargs.df = Calloc(pargs.col_cnt, myfactor_s);
 
@@ -806,7 +805,7 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
     pcd_s[i].pargs = &pargs;
     pcd_s[i].col = i;
     
-    printf("pcoder: %d Launching\n",i);
+//    printf("pcoder: %d Launching\n",i);
     sem_wait(&pargs.sem);
     pthread_create(&ths[i], &pargs.attr, pcoder, (void *) &pcd_s[i]);
   }
@@ -814,7 +813,7 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
   for(i=0;i<pargs.col_cnt;i++) {
     pthread_join(ths[i], NULL);
     pargs.df[i].label = CHAR(STRING_ELT(R_tmp1,pargs.col_idx[i]));
-    printf("pcoder: Joining %d:%s\n",i,pargs.df[i].label);
+    printf("pcoder: Joining %d:%s with %d levels and %d rows\n",i,pargs.df[i].label,pargs.df[i].levels,pargs.df[i].rows);
   }
   UNPROTECT(1);
   Free(ths);
@@ -825,23 +824,23 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
 
   pmi_s   = Calloc(iterations, pminfo_s);
   ths     = Calloc(iterations, pthread_t);
-  minfo   = Calloc(iterations * (pargs.var_cnt+1), double);
-  cells   = Calloc(iterations * (pargs.var_cnt+1), int);
-  s_cnt   = Calloc(iterations * (pargs.var_cnt+1), int);
-  v_cnt   = Calloc(iterations * (pargs.var_cnt+1), int);
-  factors = Calloc(iterations * (pargs.var_cnt+1), const char *);
-  levels  = Calloc(iterations * (pargs.var_cnt+1), const char *);
+  minfo   = Calloc(iterations * (pargs.vars+1), double);
+  cells   = Calloc(iterations * (pargs.vars+1), int);
+  s_cnt   = Calloc(iterations * (pargs.vars+1), int);
+  v_cnt   = Calloc(iterations * (pargs.vars+1), int);
+  factors = Calloc(iterations * (pargs.vars+1), const char *);
+  levels  = Calloc(iterations * (pargs.vars+1), const char *);
 
   for(i=0;i<iterations;i++) {
     /* Initialize the new thread */
     pmi_s[i].pargs   = &pargs;
     pmi_s[i].i       = i;
-    pmi_s[i].minfo   = minfo   + i * (pargs.var_cnt+1);
-    pmi_s[i].cells   = cells   + i * (pargs.var_cnt+1);
-    pmi_s[i].s_cnt   = s_cnt   + i * (pargs.var_cnt+1);
-    pmi_s[i].v_cnt   = v_cnt   + i * (pargs.var_cnt+1);
-    pmi_s[i].factors = factors + i * (pargs.var_cnt+1);
-    pmi_s[i].levels  = levels  + i * (pargs.var_cnt+1);
+    pmi_s[i].minfo   = minfo   + i * (pargs.vars+1);
+    pmi_s[i].cells   = cells   + i * (pargs.vars+1);
+    pmi_s[i].s_cnt   = s_cnt   + i * (pargs.vars+1);
+    pmi_s[i].v_cnt   = v_cnt   + i * (pargs.vars+1);
+    pmi_s[i].factors = factors + i * (pargs.vars+1);
+    pmi_s[i].levels  = levels  + i * (pargs.vars+1);
 
     sem_wait(&pargs.sem);
     if(pthread_create(&ths[i], &pargs.attr, pminfo_factors, (void *) &pmi_s[i])) 
@@ -861,44 +860,44 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
     PROTECT(R_tmp2 = allocVector(STRSXP,7));
 
     k=0;
-    SET_VECTOR_ELT(R_tmp1, k, allocVector(INTSXP, pargs.var_cnt+1));
+    SET_VECTOR_ELT(R_tmp1, k, allocVector(INTSXP, pargs.vars+1));
     PROTECT(R_tmp3 = VECTOR_ELT(R_tmp1, k));
-    for(j=0;j<pargs.var_cnt+1;j++) INTEGER(R_tmp3)[j] = j;
+    for(j=0;j<pargs.vars+1;j++) INTEGER(R_tmp3)[j] = j;
     SET_STRING_ELT(R_tmp2, k, mkChar("pos"));
     setAttrib(R_tmp1, install("row.names"), R_tmp3);
     UNPROTECT(1);
 
     k=1;
-    SET_VECTOR_ELT(R_tmp1, k, allocVector(REALSXP, pargs.var_cnt+1));
-    memcpy(REAL(VECTOR_ELT(R_tmp1, k)),pmi_s[i].minfo, (pargs.var_cnt+1) * sizeof(double));
+    SET_VECTOR_ELT(R_tmp1, k, allocVector(REALSXP, pargs.vars+1));
+    memcpy(REAL(VECTOR_ELT(R_tmp1, k)),pmi_s[i].minfo, (pargs.vars+1) * sizeof(double));
     SET_STRING_ELT(R_tmp2, k, mkChar("minfo"));
 
     k=2;
-    SET_VECTOR_ELT(R_tmp1, k, allocVector(INTSXP, pargs.var_cnt+1));
-    memcpy(INTEGER(VECTOR_ELT(R_tmp1,k)),pmi_s[i].cells,(pargs.var_cnt+1) * sizeof(int));
+    SET_VECTOR_ELT(R_tmp1, k, allocVector(INTSXP, pargs.vars+1));
+    memcpy(INTEGER(VECTOR_ELT(R_tmp1,k)),pmi_s[i].cells,(pargs.vars+1) * sizeof(int));
     SET_STRING_ELT(R_tmp2, k, mkChar("cells"));
 
     k=3;
-    SET_VECTOR_ELT(R_tmp1, k, allocVector(INTSXP, pargs.var_cnt+1));
-    memcpy(INTEGER(VECTOR_ELT(R_tmp1,k)),pmi_s[i].v_cnt,(pargs.var_cnt+1) * sizeof(int));
+    SET_VECTOR_ELT(R_tmp1, k, allocVector(INTSXP, pargs.vars+1));
+    memcpy(INTEGER(VECTOR_ELT(R_tmp1,k)),pmi_s[i].v_cnt,(pargs.vars+1) * sizeof(int));
     SET_STRING_ELT(R_tmp2, k, mkChar("ivar"));
 
     k=4;
-    SET_VECTOR_ELT(R_tmp1, k, allocVector(INTSXP, pargs.var_cnt+1));
-    memcpy(INTEGER(VECTOR_ELT(R_tmp1,k)),pmi_s[i].s_cnt,(pargs.var_cnt+1) * sizeof(int));
+    SET_VECTOR_ELT(R_tmp1, k, allocVector(INTSXP, pargs.vars+1));
+    memcpy(INTEGER(VECTOR_ELT(R_tmp1,k)),pmi_s[i].s_cnt,(pargs.vars+1) * sizeof(int));
     SET_STRING_ELT(R_tmp2, k, mkChar("svar"));
 
     k=5;
-    SET_VECTOR_ELT(R_tmp1, k, allocVector(STRSXP, pargs.var_cnt+1));
+    SET_VECTOR_ELT(R_tmp1, k, allocVector(STRSXP, pargs.vars+1));
     PROTECT(R_tmp3 = VECTOR_ELT(R_tmp1, k));
-    for(j=0;j<pargs.var_cnt+1;j++) SET_STRING_ELT(R_tmp3, j, mkChar(pmi_s[i].factors[j]));
+    for(j=0;j<pargs.vars+1;j++) SET_STRING_ELT(R_tmp3, j, mkChar(pmi_s[i].factors[j]));
     SET_STRING_ELT(R_tmp2, k, mkChar("factor"));
     UNPROTECT(1);
 
     k=6;
-    SET_VECTOR_ELT(R_tmp1, k, allocVector(STRSXP, pargs.var_cnt+1));
+    SET_VECTOR_ELT(R_tmp1, k, allocVector(STRSXP, pargs.vars+1));
     PROTECT(R_tmp3 = VECTOR_ELT(R_tmp1, k));
-    for(j=0;j<pargs.var_cnt+1;j++) SET_STRING_ELT(R_tmp3, j, mkChar(pmi_s[i].levels[j]));
+    for(j=0;j<pargs.vars+1;j++) SET_STRING_ELT(R_tmp3, j, mkChar(pmi_s[i].levels[j]));
     SET_STRING_ELT(R_tmp2, k, mkChar("levels"));
     UNPROTECT(1);
 
@@ -918,11 +917,13 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
   Free(minfo);
   Free(ths);
   Free(pmi_s);
+  /*
   for(i=0;i<pargs.col_cnt;i++) {
     Free(pargs.df[i].data);
     Free(pargs.df[i].values);
   }
   Free(pargs.df);
+  */
   Free(pargs.col_idx);
   sem_destroy(&pargs.sem);
   pthread_attr_destroy(&pargs.attr);

@@ -1,43 +1,88 @@
+autoload("read.csv.sql",package="sqldf")
+
+Rminfo <- setRefClass("Rminfo",
+  fields=list(df="data.frame",summary="integer",names="character",.factors="list"),
+  methods=list(
+    initialize=function(...) {
+      args <- list(...)
+      if(length(args) > 0) {
+        if(is.null(names(args))) df <<- as.data.frame(args)
+        else {
+          df <<- switch(names(args),
+            X=as.data.frame(args$X),
+            filter=read.csv.sql(filter=args$filter)
+          )
+          args <- args[-grep("X|filter",names(args))]
+        }
+
+        system.time(for(v in 1:ncol(df)) df[,v] <<- as.character(df[,v]))
+        summary <<- dim(df)
+        names   <<- names(df)
+      }
+
+      callSuper(args)
+      gc()
+    },
+    factors=function(...) {
+      args <- list(...)
+      n  <- 1:ncol(df); names(n) <- names(df)
+      if(is.null(args$ivars)) args$ivars <- args$ivar
+
+      if(is.null(args$svar) | is.null(args$ivars)) stop("svar and ivars fields required")
+
+      if(is.character(args$svar)) args$svar <- n[args$svar]
+      args$svar <- as.integer(args$svar -1)
+
+      if(is.character(args$ivars)) args$ivars <- n[args$ivars]
+      args$ivars <- as.integer(args$ivars -1)
+
+      args$vars        <- as.integer(if(is.null(args$vars))        15       else args$vars)
+      args$samples     <- as.integer(if(is.null(args$samples))     nrow(df) else args$samples)
+      args$verbose     <- as.integer(if(is.null(args$verbose))     1        else args$verbose)
+      args$threads     <- as.integer(if(is.null(args$threads))     1        else args$threads)
+      args$iterations  <- as.integer(if(is.null(args$iterations))  1        else args$iterations)
+
+      .factors <<- .Call("R_pminfo_factors",df,args)
+      if(args$verbose) { return(invisible(.factors)) }
+      else             { return(.factors) }
+    }
+  )
+)
+
+
+#setMethod("minfoFactors",signature="Rminfo", function(args,...) {
+#  n  <- 1:ncol(df); names(n) <- names(df)
+#  
+#  args <- as.list(args)
 #
+#  if(is.character(args[["svar"]])) args[["svar"]] <- n[args[["svar"]]]
+#  args[["svar"]] <- as.integer(args[["svar"]] -1)
 #
+#  if(is.character(args[["ivars"]])) args[["ivars"]] <- n[args[["ivars"]]]
+#  args[["ivars"]] <- as.integer(args[["ivars"]] -1)
+#
+#  args[["var_cnt"]]     <- as.integer(if(is.null(args[["var_cnt"]]))     15       else args[["var_cnt"]])
+#  args[["sample_size"]] <- as.integer(if(is.null(args[["sample_size"]])) nrow(df) else args[["sample_size"]])
+#  args[["verbose"]]     <- as.integer(if(is.null(args[["verbose"]]))     1        else args[["verbose"]])
+#  args[["threads"]]     <- as.integer(if(is.null(args[["threads"]]))     1        else args[["threads"]])
+#  args[["iterations"]]  <- as.integer(if(is.null(args[["iterations"]]))  1        else args[["iterations"]])
+#
+##  print(args)
+##  for(v in args) print(class(v))
+#
+#  print(".Call R_pminfo_factors")
+#  factors <<- .Call("R_pminfo_factors",df,args)
+#  if(args[["verbose"]]) { return(invisible(factors)) }
+#  else                  { return(factors) }
+#})
 
-minfo_factors <- function(df,args) {
-  df$value <- as.data.frame(df$value)
-  n  <- 1:ncol(df$value); names(n) <- names(df$value)
-  
-  args <- as.list(args)
-
-  if(is.character(args[["svar"]])) args[["svar"]] <- n[args[["svar"]]]
-  df$value[,args[["svar"]]] <- as.character(df$value[,args[["svar"]]])
-  args[["svar"]] <- as.integer(args[["svar"]] -1)
-
-  if(is.character(args[["ivars"]])) args[["ivars"]] <- n[args[["ivars"]]]
-  for(v in args[["ivars"]]) df$value[,v] <- as.character(df$value[,v])
-  args[["ivars"]] <- as.integer(args[["ivars"]] -1)
-
-  args[["var_cnt"]]     <- as.integer(if(is.null(args[["var_cnt"]]))     15       else args[["var_cnt"]])
-  args[["sample_size"]] <- as.integer(if(is.null(args[["sample_size"]])) nrow(df$value) else args[["sample_size"]])
-  args[["verbose"]]     <- as.integer(if(is.null(args[["verbose"]]))     1        else args[["verbose"]])
-  args[["threads"]]     <- as.integer(if(is.null(args[["threads"]]))     1        else args[["threads"]])
-  args[["iterations"]]  <- as.integer(if(is.null(args[["iterations"]]))  1        else args[["iterations"]])
-
-#  print(args)
-#  for(v in args) print(class(v))
-
-  print(".Call R_pminfo_factors")
-  rv = .Call("R_pminfo_factors",df$value,args)
-  if(args[["verbose"]]) { return(invisible(rv)) }
-  else                  { return(rv) }
-}
-
-minfo <- function(svar,ivars,count=0,val=1,progress=FALSE,entropy=FALSE) {
-  ivars <- as.data.frame(ivars)
+minfo <-  function(svar,ivars,count=0,val=1,progress=FALSE,entropy=FALSE,...) {
   for(j in 1:ncol(ivars)) {
     ivars[,j] <- as.factor(ivars[,j])
   }
 
   rv <- .Call("R_minfo",
-      as.factor(svar),
+      svar,
       ivars,
       as.integer(count),
       as.real(val),
@@ -48,7 +93,7 @@ minfo <- function(svar,ivars,count=0,val=1,progress=FALSE,entropy=FALSE) {
 }
 
 
-minfo.old <- function(svar,ivars,iterate=FALSE,progress=TRUE,count=999999,val=1) {
+minfo_old <-  function(svar,ivars,iterate=FALSE,progress=TRUE,count=999999,val=1,...) {
     rv <- .Call("R_minfo_old",
         as.matrix(ivars),
         as.vector(svar),
@@ -60,7 +105,7 @@ minfo.old <- function(svar,ivars,iterate=FALSE,progress=TRUE,count=999999,val=1)
     return(rv)
 }
 
-minfo.old.old <- function(svars,ivars) {
+minfo_old_old <- function(this,svars,ivars,...) {
     rows         <- nrow(ivars)
     cols         <- ncol(ivars)
     data         <- matrix(nrow=rows,ncol=cols)
