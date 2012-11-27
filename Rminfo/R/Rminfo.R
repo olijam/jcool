@@ -6,21 +6,22 @@ Rminfo <- setRefClass("Rminfo",
     initialize=function(...) {
       args <- list(...)
       if(length(args) > 0) {
-        if(is.null(names(args))) df <<- as.data.frame(args)
-        else {
-          df <<- switch(names(args),
-            X=as.data.frame(args$X),
-            filter=read.csv.sql(filter=args$filter)
-          )
-          args <- args[-grep("X|filter",names(args))]
+        if(is.null(names(args))) {
+          df <<- as.data.frame(args,stringsAsFactors=FALSE)
+        } else if(!is.null(args$filter)) {
+          n <- read.csv.sql(filter=sprintf("%s | head -1",args$filter))
+          f.types <- rep("TEXT",length(n))
+          names(f.types) <- names(n)
+          df <<- read.csv.sql(filter=args$filter,field.types=f.types,dbname=NULL)
+        } else if(!is.null(args$X)) {
+          df <<- as.data.frame(args$X,stringAsFactors=FALSE)
         }
+        for(v in 1:ncol(df))  if(!is.character(df[,v])) df[,v] <<- as.character(df[,v])
 
-        system.time(for(v in 1:ncol(df)) df[,v] <<- as.character(df[,v]))
         summary <<- dim(df)
         names   <<- names(df)
       }
 
-      callSuper(args)
       gc()
     },
     factors=function(...) {

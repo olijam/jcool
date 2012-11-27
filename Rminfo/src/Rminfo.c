@@ -714,7 +714,7 @@ void *pminfo_factors(void *p) {
   arg->cells[l] = w.levels;
 
   if(arg->pargs->verbose) {
-    printf("%5d %7.5f %6d %9d %9d %8.4f%% \"%s\" \"%s\"\n",
+    fprintf(stderr,"%5d %7.5f %6d %9d %9d %8.4f%% \"%s\" \"%s\"\n",
       l,arg->minfo[l],arg->cells[l],
       arg->v_cnt[l], arg->s_cnt[l], arg->v_cnt[l] ? 100 * arg->s_cnt[l]/(double)arg->v_cnt[l] : 0.0,
       arg->factors[l],arg->levels[l]);
@@ -749,7 +749,7 @@ void *pminfo_factors(void *p) {
     arg->minfo[l]   = minfo = 1 - min_entropy / tot_entropy;
     arg->cells[l]   = w.levels;
     if(arg->pargs->verbose) {
-      printf("%5d %7.5f %6d %9d %9d %8.4f%% \"%s\" \"%s\"\n",
+      fprintf(stderr,"%5d %7.5f %6d %9d %9d %8.4f%% \"%s\" \"%s\"\n",
         l,arg->minfo[l],arg->cells[l],
         arg->v_cnt[l], arg->s_cnt[l], arg->v_cnt[l] ? 100 * arg->s_cnt[l]/(double)arg->v_cnt[l] : 0.0,
         arg->factors[l],arg->levels[l]);
@@ -777,7 +777,6 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
   pcoder_s *pcd_s;
   pthread_t *ths;
 
-  printf("Starting R_pminfo_factors\n");
   pargs.R_df = R_df;
   pargs.vars  = *INTEGER(getListElt(R_args,"vars"));
   pargs.col_cnt = length(getListElt(R_args,"ivars")) +1;
@@ -813,7 +812,8 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
   for(i=0;i<pargs.col_cnt;i++) {
     pthread_join(ths[i], NULL);
     pargs.df[i].label = CHAR(STRING_ELT(R_tmp1,pargs.col_idx[i]));
-    printf("pcoder: Joining %d:%s with %d levels and %d rows\n",i,pargs.df[i].label,pargs.df[i].levels,pargs.df[i].rows);
+    if(pargs.verbose) 
+      fprintf(stderr,"pcoder: Joining %d:%s with %d levels and %d rows\n",i,pargs.df[i].label,pargs.df[i].levels,pargs.df[i].rows);
   }
   UNPROTECT(1);
   Free(ths);
@@ -847,7 +847,7 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
       error("Can start thread %d: %s\n",i,strerror(errno));
   }
 
-  printf("Started them all\n");
+  //printf("Started them all\n");
   /* Accumulate the data and formulate return list */
   PROTECT(R_rv = allocVector(VECSXP,iterations));
   for(i=0;i<iterations;i++) {
@@ -898,7 +898,7 @@ SEXP R_pminfo_factors(SEXP R_df, SEXP R_args) {
     SET_VECTOR_ELT(R_tmp1, k, allocVector(STRSXP, pargs.vars+1));
     PROTECT(R_tmp3 = VECTOR_ELT(R_tmp1, k));
     for(j=0;j<pargs.vars+1;j++) SET_STRING_ELT(R_tmp3, j, mkChar(pmi_s[i].levels[j]));
-    SET_STRING_ELT(R_tmp2, k, mkChar("levels"));
+    SET_STRING_ELT(R_tmp2, k, mkChar("level"));
     UNPROTECT(1);
 
     setAttrib(R_tmp1, R_NamesSymbol, R_tmp2);
