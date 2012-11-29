@@ -5,14 +5,26 @@ Rminfo <- setRefClass("Rminfo",
   methods=list(
     initialize=function(...) {
       args <- list(...)
+      if(!is.null(args$memory.db)) dbname = NULL
+      else                         dbname = tempfile()
       if(length(args) > 0) {
         if(is.null(names(args))) {
           df <<- as.data.frame(args,stringsAsFactors=FALSE)
         } else if(!is.null(args$filter)) {
-          n <- read.csv.sql(filter=sprintf("%s | head -1",args$filter))
-          f.types <- rep("TEXT",length(n))
-          names(f.types) <- names(n)
-          df <<- read.csv.sql(filter=args$filter,field.types=f.types,dbname=NULL)
+          if(is.null(args$field.types)) {
+            n <- read.csv.sql(filter=sprintf("%s | head -1",args$filter))
+            f.types <- rep("TEXT",length(n))
+            names(f.types) <- names(n)
+          } else f.types = NULL
+          df <<- read.csv.sql(filter=args$filter,field.types=f.types,dbname=dbname)
+        } else if(!is.null(args$file)) {
+          if(is.null(args$field.types)) {
+            n <- read.csv.sql(file=args$file,nrows=1)
+            f.types <- rep("TEXT",length(n))
+            names(f.types) <- names(n)
+          } else f.types = NULL
+          df <<- read.csv.sql(file=args$file,field.types=f.types,dbname=dbname,header=FALSE)
+          if(is.null(args$field.types)) names(df) <<- names(n)
         } else if(!is.null(args$X)) {
           df <<- as.data.frame(args$X,stringAsFactors=FALSE)
         }

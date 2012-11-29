@@ -1,26 +1,28 @@
 #!/usr/local/bin/Rscript --no-save
+options(warn=-1)
+options(stringsAsFactors=FALSE)
 
 # Defaults
-THREADS    <- 40
+THREADS    <- 6
 ITERATIONS <- 200
 VARS       <- 15
 
 library(Rminfo)
-options(stringsAsFactors=FALSE)
-options(warn=-1)
 
 args <- commandArgs(trailingOnly=TRUE)
 
 opts <- args[grep("^--",args)]
-names(opts) <- sub("^--(\\w+)=?.*","\\1",opts)
-opts[-grep("\\w=",opts)] <- 1
-r <- grep("=",opts); opts[r] <- sub(".*=(.*)","\\1",opts[r])
-
+names(opts) <- sub("^--([\\w.]+)=?.*","\\1",opts,perl=TRUE)
+opts[grep("=",opts,invert=TRUE)] <- 1
+r <- grep("=",opts); opts[r] <- sub("(.*)?=(.*)","\\2",opts[r])
 opts <- as.list(opts)
+
 opts$name       <- if(is.null(opts$name))      ""          else opts$name
 opts$threads    <- if(is.null(opts$threads))    THREADS    else opts$threads
 opts$iterations <- if(is.null(opts$iterations)) ITERATIONS else opts$iterations
 opts$vars       <- if(is.null(opts$vars))       VARS       else opts$vars
+opts$memory.db  <- if(is.null(opts$memory.db))  NULL       else opts$memory.db
+opts$field.types <- if(is.null(opts$field.types)) NULL     else opts$field.types
 
 r <- grep("^--",args)
 files <- if(length(r) > 0) args[-r] else args
@@ -59,17 +61,23 @@ ivar_cols <- c(
   "gender")
 
 for(f in files) {
-  recs <- Rminfo$new(filter=sprintf("xz -dc %s",f))
+#  recs <- Rminfo$new(filter=sprintf("xz -dc %s",f),memory.db=opts$memory.db,field.types=opts$field.types)
+  recs <- Rminfo$new(file=f,memory.db=opts$memory.db,field.types=opts$field.types)
   recs$df$converts <- as.character(as.integer(as.numeric(recs$df$conversion_category) > 0))
   gc()
 
-  STATE <- if(length(grep('cpa',recs$df$goal,invert=TRUE,fixed=TRUE))>0) "clicks" else "converts"
-#  STATE <- "clicks"
+#  STATE <- if(length(grep('cpa',recs$df$goal,invert=TRUE,fixed=TRUE))>0) "clicks" else "converts"
+  STATE <- "clicks"
   SAMPLE_FACTOR <- 1e5/nrow(recs$df)
   SAMPLE_FACTOR <- if(SAMPLE_FACTOR > 0.80) 0.80 else SAMPLE_FACTOR
   SAMPLE_FACTOR <- if(SAMPLE_FACTOR < 0.20) 0.20 else SAMPLE_FACTOR
 
-  print(sprintf("%s rows %d, SAMPLE_FACTOR %.3f%%, STATE %s",f,nrow(recs$df),100 * SAMPLE_FACTOR, STATE))
+  cat(sprintf("%s rows %d, SAMPLE_FACTOR %.3f%%, STATE %s",
+      f,
+      nrow(recs$df),
+      100 * SAMPLE_FACTOR, STATE),
+    file=stderr())
+  if(nrow(recs$df) < 1e5) next
 
   pres <- recs$factors(
     svar=STATE,
