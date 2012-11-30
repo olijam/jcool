@@ -11,24 +11,13 @@ Rminfo <- setRefClass("Rminfo",
         if(is.null(names(args))) {
           df <<- as.data.frame(args,stringsAsFactors=FALSE)
         } else if(!is.null(args$filter)) {
-          if(is.null(args$field.types)) {
-            n <- read.csv.sql(filter=sprintf("%s | head -1",args$filter))
-            f.types <- rep("TEXT",length(n))
-            names(f.types) <- names(n)
-          } else f.types = NULL
-          df <<- read.csv.sql(filter=args$filter,field.types=f.types,dbname=dbname)
+          df <<- read.csv.sql(filter=args$filter,dbname=dbname)
         } else if(!is.null(args$file)) {
-          if(is.null(args$field.types)) {
-            n <- read.csv.sql(file=args$file,nrows=1)
-            f.types <- rep("TEXT",length(n))
-            names(f.types) <- names(n)
-          } else f.types = NULL
-          df <<- read.csv.sql(file=args$file,field.types=f.types,dbname=dbname,header=FALSE)
-          if(is.null(args$field.types)) names(df) <<- names(n)
+          df <<- read.csv.sql(file=args$file,dbname=dbname)
         } else if(!is.null(args$X)) {
           df <<- as.data.frame(args$X,stringAsFactors=FALSE)
         }
-        for(v in 1:ncol(df))  if(!is.character(df[,v])) df[,v] <<- as.character(df[,v])
+#        for(v in 1:ncol(df))  if(!is.character(df[,v])) df[,v] <<- as.character(df[,v])
 
         summary <<- dim(df)
         names   <<- names(df)
@@ -44,9 +33,11 @@ Rminfo <- setRefClass("Rminfo",
       if(is.null(args$svar) | is.null(args$ivars)) stop("svar and ivars fields required")
 
       if(is.character(args$svar)) args$svar <- n[args$svar]
+      if(!is.character(df[,args$svar])) df[,args$svar] <<- as.character(df[,args$svar])
       args$svar <- as.integer(args$svar -1)
 
       if(is.character(args$ivars)) args$ivars <- n[args$ivars]
+      for(v in args$ivars)  if(!is.character(df[,v])) df[,v] <<- as.character(df[,v])
       args$ivars <- as.integer(args$ivars -1)
 
       args$vars        <- as.integer(if(is.null(args$vars))        15       else args$vars)
@@ -55,6 +46,7 @@ Rminfo <- setRefClass("Rminfo",
       args$threads     <- as.integer(if(is.null(args$threads))     1        else args$threads)
       args$iterations  <- as.integer(if(is.null(args$iterations))  1        else args$iterations)
 
+      gc()
       .factors <<- .Call("R_pminfo_factors",df,args)
       if(args$verbose) { return(invisible(.factors)) }
       else             { return(.factors) }

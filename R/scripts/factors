@@ -4,8 +4,14 @@ options(stringsAsFactors=FALSE)
 
 # Defaults
 THREADS    <- 6
-ITERATIONS <- 200
-VARS       <- 15
+ITERATIONS <- 60
+VARS       <- 17
+THRESHOLD  <- 1e5
+BANFF_DIR  <- "/data2/banff_by_day_and_campaign"
+UNZIPPER   <- "xz -dc"
+ZIPPER     <- "xz -4"
+ENV        <- as.list(Sys.getenv())
+PARSER     <- sprintf("%s/bin/banff_parser",ENV$HOME)
 
 library(Rminfo)
 
@@ -22,11 +28,17 @@ opts$threads    <- if(is.null(opts$threads))    THREADS    else opts$threads
 opts$iterations <- if(is.null(opts$iterations)) ITERATIONS else opts$iterations
 opts$vars       <- if(is.null(opts$vars))       VARS       else opts$vars
 opts$memory.db  <- if(is.null(opts$memory.db))  NULL       else opts$memory.db
-opts$field.types <- if(is.null(opts$field.types)) NULL     else opts$field.types
+
 
 r <- grep("^--",args)
-files <- if(length(r) > 0) args[-r] else args
-if(length(files) == 0) {files <- "stdin"}
+campaigns <- if(length(r) > 0) args[-r] else args
+if(length(campaigns) == 0) stop("No campaigns to process!")
+
+if(!is.null(opts$after.date)) {
+  after.day_id <- as.numeric(as.Date(opts$after.date) - as.Date("2000-01-01"))
+  today.day_id <- as.numeric(Sys.Date() - as.Date("2000-01-01"))
+  days = sprintf("{%d..%d}", after.day_id, today.day_id)
+} else days = "*"
 
 ivar_cols <- c(
   "hour_id",
@@ -60,9 +72,10 @@ ivar_cols <- c(
   "age",
   "gender")
 
-for(f in files) {
-#  recs <- Rminfo$new(filter=sprintf("xz -dc %s",f),memory.db=opts$memory.db,field.types=opts$field.types)
-  recs <- Rminfo$new(file=f,memory.db=opts$memory.db,field.types=opts$field.types)
+for(f in campaigns) {
+  recs <- Rminfo$new(
+    filter=sprintf("%s %s/%s/%s.xz 2>/dev/null | %s", UNZIPPER, BANFF_DIR, days, f, PARSER),
+    memory.db=opts$memory.db)
   recs$df$converts <- as.character(as.integer(as.numeric(recs$df$conversion_category) > 0))
   gc()
 
@@ -72,12 +85,15 @@ for(f in files) {
   SAMPLE_FACTOR <- if(SAMPLE_FACTOR > 0.80) 0.80 else SAMPLE_FACTOR
   SAMPLE_FACTOR <- if(SAMPLE_FACTOR < 0.20) 0.20 else SAMPLE_FACTOR
 
-  cat(sprintf("%s rows %d, SAMPLE_FACTOR %.3f%%, STATE %s",
+  cat(sprintf("%s rows %d, SAMPLE_FACTOR %.3f%%, STATE %s\n",
       f,
       nrow(recs$df),
       100 * SAMPLE_FACTOR, STATE),
     file=stderr())
-  if(nrow(recs$df) < 1e5) next
+  if(nrow(recs$df) < THRESHOLD) {
+    cat(sprintf("Campaign %s impressions %d, no factors -- not enough impressions\n", f, nrow(recs$df)))
+    next
+  }
 
   pres <- recs$factors(
     svar=STATE,
