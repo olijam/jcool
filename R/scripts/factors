@@ -1,6 +1,7 @@
 #!/usr/local/bin/Rscript --no-save
 options(warn=-1)
 options(stringsAsFactors=FALSE)
+options(gsubfn.engine="R")
 
 # Defaults
 THREADS    <- 6
