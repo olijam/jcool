@@ -135,6 +135,10 @@ for(f in campaigns) {
 
   ave_ctr <- clicks   / impressions
   ave_atr <- converts / impressions
+
+  if(STATE == "clicks") t2 <- t2[t2$impressions > 1/ave_ctr,]
+  else                  t2 <- t2[t2$impressions > 1/ave_atr,]
+
   levels <- 0
   for(v in ivar_cols) levels <- levels + length(unique(recs$df[,v]))
   t2 <- rbind(t2,
@@ -160,6 +164,7 @@ for(f in campaigns) {
     t2$gb[t2$atr > ave_atr] <- "Good"
     t2$gb[t2$atr < ave_atr] <- "Bad"
   }
+
 
   o <- if(STATE == "clicks") 
     order(t2$factor,t2$ctr,decreasing=TRUE) else 

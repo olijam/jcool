@@ -1,4 +1,0 @@
-jcool
-=====
-
-My Public Stuff
