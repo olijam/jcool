@@ -125,16 +125,22 @@ for(f in campaigns) {
     t2$impressions[i] <-  sum(as.numeric(recs$df$impressions[r]))
     t2$clicks[i]      <-  sum(as.numeric(recs$df$clicks[r]))
     t2$ctr[i]         <- t2$clicks[i] / t2$impressions[i]
+    t2$cpc[i]         <- sum(as.numeric(recs$df$total_cust_cost[r]))/ t2$clicks[i]
     t2$converts[i]    <-  sum(as.numeric(recs$df$converts[r]))
     t2$atr[i]         <- t2$converts[i] / t2$impressions[i]
+    t2$cpa[i]         <- sum(as.numeric(recs$df$total_cust_cost[r]))/ t2$converts[i]
   }
 
   clicks      <- sum(as.numeric(recs$df$clicks))
   impressions <- sum(as.numeric(recs$df$impressions))
   converts    <- sum(as.numeric(recs$df$converts))
+  cust_cost   <- sum(as.numeric(recs$df$total_cust_cost))
 
   ave_ctr <- clicks   / impressions
+  ave_cpc <- cust_cost / clicks
   ave_atr <- converts / impressions
+  ave_cpa <- cust_cost / converts
+  
 
   if(STATE == "clicks") t2 <- t2[t2$impressions > 1/ave_ctr,]
   else                  t2 <- t2[t2$impressions > 1/ave_atr,]
@@ -152,8 +158,10 @@ for(f in campaigns) {
       impressions=impressions,
       clicks=clicks,
       ctr=ave_ctr,
+      cpa=ave_cpa,
       converts=converts,
-      atr=ave_atr
+      atr=ave_atr,
+      cpa=ave_cpa
     ))
 
   t2$gb <- "Average"
@@ -169,7 +177,7 @@ for(f in campaigns) {
   o <- if(STATE == "clicks") 
     order(t2$factor,t2$ctr,decreasing=TRUE) else 
     order(t2$factor,t2$atr,decreasing=TRUE)
-  n <- c("gb","factor","level","impressions","clicks","ctr","converts","atr","1","pos","minfo","cells")
+  n <- c("gb","factor","level","impressions","clicks","ctr","cpc","converts","atr","cpa","1","pos","minfo","cells")
 
   fp <- unlist(strsplit(f,'.',fixed=TRUE))
   write.csv(t2[o,n],file=stdout(),row.names=FALSE)
