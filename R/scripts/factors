@@ -119,16 +119,20 @@ for(f in campaigns) {
   t2$impressions <- 1
   t2$clicks      <- 1
   t2$ctr         <- 1
+  t2$cpc         <- 0
+  t2$converts    <- 0
+  t2$atr         <- 0
+  t2$cpa         <- 0
 
   for(i in 1:nrow(t2)) {
     r <- which(recs$df[,t2$factor[i]] == t2$level[i])
     t2$impressions[i] <-  sum(as.numeric(recs$df$impressions[r]))
     t2$clicks[i]      <-  sum(as.numeric(recs$df$clicks[r]))
     t2$ctr[i]         <- t2$clicks[i] / t2$impressions[i]
-    t2$cpc[i]         <- sum(as.numeric(recs$df$total_cust_cost[r]))/ t2$clicks[i]
+    t2$cpc[i]         <- if(t2$clicks[i] > 0) sum(as.numeric(recs$df$total_cust_cost[r]))/ t2$clicks[i] else 0
     t2$converts[i]    <-  sum(as.numeric(recs$df$converts[r]))
     t2$atr[i]         <- t2$converts[i] / t2$impressions[i]
-    t2$cpa[i]         <- sum(as.numeric(recs$df$total_cust_cost[r]))/ t2$converts[i]
+    t2$cpa[i]         <- if(t2$converts[i] > 0) sum(as.numeric(recs$df$total_cust_cost[r]))/ t2$converts[i] else 0
   }
 
   clicks      <- sum(as.numeric(recs$df$clicks))
@@ -137,11 +141,10 @@ for(f in campaigns) {
   cust_cost   <- sum(as.numeric(recs$df$total_cust_cost))
 
   ave_ctr <- clicks   / impressions
-  ave_cpc <- cust_cost / clicks
+  ave_cpc <- if(clicks > 0) cust_cost / clicks else 0
   ave_atr <- converts / impressions
-  ave_cpa <- cust_cost / converts
+  ave_cpa <- if(converts > 0) cust_cost / converts else 0
   
-
   if(STATE == "clicks") t2 <- t2[t2$impressions > 1/ave_ctr,]
   else                  t2 <- t2[t2$impressions > 1/ave_atr,]
 
@@ -158,7 +161,7 @@ for(f in campaigns) {
       impressions=impressions,
       clicks=clicks,
       ctr=ave_ctr,
-      cpa=ave_cpa,
+      cpc=ave_cpc,
       converts=converts,
       atr=ave_atr,
       cpa=ave_cpa
